@@ -4,12 +4,14 @@
 //! is a bracket whose width cannot fall below the rounding of the pieces it is summed over:
 //! asked for a narrower one, it refuses and names the narrowest it proves. Asked for one
 //! the curve would need more than the cap of pieces for, it refuses and names the width
-//! reached at the cap.
+//! reached at the cap. A piece found outside the knot span it is blossomed in (which the
+//! halving never makes, and the rounding bound assumes) is refused, named (#14434).
 //!
 //! | Rust                                 | Status difftest compares |
 //! |--------------------------------------|--------------------------|
 //! | [`CurveFailure::LengthBelowFloor`]   | `SM_ERR`                 |
 //! | [`CurveFailure::LengthPastPieceCap`] | `SM_ERR`                 |
+//! | [`CurveFailure::PieceOutsideSpan`]   | `SM_ERR`                 |
 //!
 //! Deviations: not upstream.
 
@@ -40,23 +42,40 @@ pub enum CurveFailure {
         /// The pieces at the cap.
         pieces: usize,
     },
+    /// A piece `[a, b]` of a length bracket lies outside the knot span
+    /// `[span_start, span_end]` it is blossomed in: the bracket's rounding bound holds only
+    /// for a piece within its span (a port invariant: the halving keeps every piece within).
+    PieceOutsideSpan {
+        /// The piece's start.
+        a: f64,
+        /// The piece's end.
+        b: f64,
+        /// The knot span's start.
+        span_start: f64,
+        /// The knot span's end.
+        span_end: f64,
+    },
 }
 
 impl CurveFailure {
     /// The status the C++ reports for it (a comparison detail): `SM_ERR`.
     pub(crate) const fn comparison_status(&self) -> i32 {
         match self {
-            Self::LengthBelowFloor { .. } | Self::LengthPastPieceCap { .. } => SM_ERR,
+            Self::LengthBelowFloor { .. }
+            | Self::LengthPastPieceCap { .. }
+            | Self::PieceOutsideSpan { .. } => SM_ERR,
         }
     }
 
-    /// Its stable [`ErrorKind`]: the accuracy asked is finer than the computation resolves.
+    /// Its stable [`ErrorKind`]: the accuracy asked is finer than the computation resolves;
+    /// a piece outside its span is a port invariant broken.
     #[must_use]
     pub const fn kind(&self) -> ErrorKind {
         match self {
             Self::LengthBelowFloor { .. } | Self::LengthPastPieceCap { .. } => {
                 ErrorKind::NotWithinTolerance
             }
+            Self::PieceOutsideSpan { .. } => ErrorKind::PortInvariant,
         }
     }
 }
@@ -79,6 +98,15 @@ impl core::fmt::Display for CurveFailure {
             } => write!(
                 f,
                 "a length bracket {asked:e} wide was asked; at its cap of {pieces} pieces it is {reached:e} wide"
+            ),
+            Self::PieceOutsideSpan {
+                a,
+                b,
+                span_start,
+                span_end,
+            } => write!(
+                f,
+                "a piece [{a:e}, {b:e}] of a length bracket lies outside its knot span [{span_start:e}, {span_end:e}]"
             ),
         }
     }
